@@ -1,4 +1,5 @@
 use std::io;
+use std::io::Read;
 use std::net::SocketAddr;
 
 use tokio::io::{AsyncReadExt, BufReader};
@@ -7,8 +8,8 @@ use tokio::prelude::*;
 
 struct PunterTransfer {
     payload: Vec<u8>,
-    first_block: bool,
     metadata_block: bool,
+    block_num: u16,
 }
 
 mod punter {
@@ -16,10 +17,10 @@ mod punter {
     use std::io::prelude::*;
 
     pub struct PunterHeader {
-        check_add: u16,
-        check_xor: u16,
-        block_size: u8,
-        block_num: u16,
+        pub check_add: u16,
+        pub check_xor: u16,
+        pub block_size: u8,
+        pub block_num: u16,
     }
 
     impl PunterHeader {
@@ -72,6 +73,14 @@ mod punter {
 }
 
 impl PunterTransfer {
+    fn new(payload: Vec<u8>, metadata_block: bool) -> Self {
+        PunterTransfer {
+            payload,
+            metadata_block,
+            block_num: 0,
+        }
+    }
+
     async fn wait_send_block<R: Unpin + AsyncReadExt>(&self, mut read: R) -> io::Result<R> {
         println!("Waiting for S/B");
         loop {
@@ -108,12 +117,42 @@ impl PunterTransfer {
                 continue;
             }
             println!("Got GOO");
+
+            let block_size = self.get_block_size();
+            self.block_num += 1;
+            self.payload = self.payload.split_off(block_size as usize);
+
             return Ok(read);
         }
     }
 
+    fn get_block_size(&self) -> u8 {
+        if self.block_num == 0 && !self.metadata_block {
+            // For non-metadata blocks, the first block is a bare header
+            0
+        } else if self.payload.len() > 255 {
+            // Otherwise, send as much as we can
+            255 as u8
+        } else {
+            self.payload.len() as u8
+        }
+    }
+
     async fn send_block<W: Unpin + AsyncWrite>(&self, mut write: W) -> io::Result<W> {
-        unimplemented!();
+        let block_size = self.get_block_size();
+
+        let mut header = punter::PunterHeader::new(self.block_num, block_size);
+        let check_add = header.check_add();
+        let check_xor = header.check_xor();
+        header.check_add = check_add;
+        header.check_xor = check_xor;
+        let header_bytes = header.to_bytes();
+        write.write_all(&header_bytes).await?;
+        write
+            .write_all(&self.payload[0..block_size as usize])
+            .await?;
+
+        Ok(write)
     }
 
     async fn send_ack<W: Unpin + AsyncWrite>(&self, mut write: W) -> io::Result<W> {
@@ -192,8 +231,21 @@ async fn handle_client(mut conn: TcpStream) -> io::Result<()> {
     }
 
     if let Some(fname) = transfer {
+        let fname = fname.to_lowercase().to_string();
+
         println!("Transferring {}", fname);
         write.write_all(&" SENDING NOW\r".as_bytes()).await?;
+
+        let mut f = std::fs::File::open(fname)?;
+
+        let payload = vec!['1' as u8];
+        let mut punter = PunterTransfer::new(payload, true);
+        let (bufread, write) = punter.transfer(bufread, write).await?;
+
+        let mut payload = Vec::new();
+        f.read_to_end(&mut payload)?;
+        let mut punter = PunterTransfer::new(payload, false);
+        let (bufread, write) = punter.transfer(bufread, write).await?;
     }
 
     Ok(())
