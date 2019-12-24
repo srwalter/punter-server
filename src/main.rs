@@ -5,22 +5,19 @@ use tokio::io::BufReader;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::prelude::*;
 
-async fn handle_client(mut conn: TcpStream) {
-    let (read, write) = conn.split();
+async fn handle_client(mut conn: TcpStream) -> io::Result<()> {
+    let (read, mut write) = conn.split();
     let bufread = BufReader::new(read);
     let mut l = bufread.split('\r' as u8);
     loop {
-        if let Ok(maybe_line) = l.next_segment().await {
-            if let Some(line) = maybe_line {
-                println!("{:?}", line);
-            } else {
-                break;
-            }
+        if let Some(line) = l.next_segment().await? {
+            println!("{:?}", line);
+            write.write_all(&line).await?;
         } else {
             break;
         }
     }
-    ()
+    Ok(())
 }
 
 #[tokio::main]
@@ -30,6 +27,6 @@ async fn main() -> io::Result<()> {
 
     loop {
         let (c, _) = listener.accept().await?;
-        handle_client(c).await;
+        handle_client(c).await?;
     }
 }
