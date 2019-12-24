@@ -8,11 +8,11 @@ use tokio::prelude::*;
 async fn handle_client(mut conn: TcpStream) {
     let (read, write) = conn.split();
     let bufread = BufReader::new(read);
-    let mut l = bufread.lines();
+    let mut l = bufread.split('\r' as u8);
     loop {
-        if let Ok(maybe_line) = l.next_line().await {
+        if let Ok(maybe_line) = l.next_segment().await {
             if let Some(line) = maybe_line {
-                println!("{}", line);
+                println!("{:?}", line);
             } else {
                 break;
             }
