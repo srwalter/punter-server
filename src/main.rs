@@ -1,9 +1,94 @@
 use std::io;
 use std::net::SocketAddr;
 
-use tokio::io::BufReader;
+use tokio::io::{AsyncReadExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::prelude::*;
+
+struct PunterTransfer {
+    payload: Vec<u8>,
+}
+
+impl PunterTransfer {
+    async fn wait_send_block<R: Unpin + AsyncReadExt>(&self, mut read: R) -> io::Result<R> {
+        loop {
+            let x = read.read_u8().await?;
+            if x != 'S' as u8 {
+                continue;
+            }
+            let x = read.read_u8().await?;
+            if x != '/' as u8 {
+                continue;
+            }
+            let x = read.read_u8().await?;
+            if x != 'B' as u8 {
+                continue;
+            }
+            return Ok(read);
+        }
+    }
+
+    async fn wait_good<R: Unpin + AsyncRead>(&mut self, mut read: R) -> io::Result<R> {
+        loop {
+            let x = read.read_u8().await?;
+            if x != 'G' as u8 {
+                continue;
+            }
+            let x = read.read_u8().await?;
+            if x != 'O' as u8 {
+                continue;
+            }
+            let x = read.read_u8().await?;
+            if x != 'O' as u8 {
+                continue;
+            }
+            return Ok(read);
+        }
+    }
+
+    async fn send_block<W: Unpin + AsyncWrite>(&self, mut write: W) -> io::Result<W> {
+        unimplemented!();
+    }
+
+    async fn send_ack<W: Unpin + AsyncWrite>(&self, mut write: W) -> io::Result<W> {
+        write.write_all(&"ACK".as_bytes()).await?;
+        Ok(write)
+    }
+
+    async fn send_syn<W: Unpin + AsyncWrite>(&self, mut write: W) -> io::Result<W> {
+        write.write_all(&"SYN".as_bytes()).await?;
+        Ok(write)
+    }
+
+    async fn transfer<R: AsyncReadExt + Unpin, W: AsyncWrite + Unpin>(
+        &mut self,
+        read: R,
+        write: W,
+    ) -> io::Result<(R, W)> {
+        let mut r = Some(read);
+        let mut w = Some(write);
+
+        loop {
+            let read = self.wait_send_block(r.take().unwrap()).await?;
+            let write = self.send_block(w.take().unwrap()).await?;
+            let read = self.wait_good(read).await?;
+            let write = self.send_ack(write).await?;
+
+            r = Some(read);
+            w = Some(write);
+
+            if self.payload.len() == 0 {
+                break;
+            }
+        }
+
+        let read = self.wait_send_block(r.take().unwrap()).await?;
+        let write = self.send_syn(w.take().unwrap()).await?;
+        let read = self.wait_send_block(read).await?;
+
+        Ok((read, write))
+    }
+}
 
 async fn handle_client(mut conn: TcpStream) -> io::Result<()> {
     let (read, mut write) = conn.split();
