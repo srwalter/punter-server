@@ -7,10 +7,73 @@ use tokio::prelude::*;
 
 struct PunterTransfer {
     payload: Vec<u8>,
+    first_block: bool,
+    metadata_block: bool,
+}
+
+mod punter {
+    use std::io;
+    use std::io::prelude::*;
+
+    pub struct PunterHeader {
+        check_add: u16,
+        check_xor: u16,
+        block_size: u8,
+        block_num: u16,
+    }
+
+    impl PunterHeader {
+        pub fn new(block_num: u16, block_size: u8) -> PunterHeader {
+            PunterHeader {
+                check_add: 0,
+                check_xor: 0,
+                block_size,
+                block_num,
+            }
+        }
+
+        pub fn to_bytes(&self) -> Vec<u8> {
+            let mut cursor = io::Cursor::new(vec![7]);
+            cursor.write_all(&self.check_add.to_le_bytes()).unwrap();
+            cursor.write_all(&self.check_xor.to_le_bytes()).unwrap();
+            cursor.write_all(&[self.block_size]).unwrap();
+            cursor.write_all(&self.block_num.to_le_bytes()).unwrap();
+
+            cursor.into_inner()
+        }
+
+        pub fn check_add(&self) -> u16 {
+            let mut sum: u16 = 0;
+            let bytes = self.to_bytes();
+
+            for b in &bytes {
+                sum += *b as u16;
+            }
+
+            sum
+        }
+
+        pub fn check_xor(&self) -> u16 {
+            let mut sum: u16 = 0;
+            let bytes = self.to_bytes();
+
+            for b in &bytes {
+                sum ^= *b as u16;
+                let high_bit = 0x8000;
+                sum <<= 1;
+                if high_bit != 0 {
+                    sum |= 1;
+                }
+            }
+
+            sum
+        }
+    }
 }
 
 impl PunterTransfer {
     async fn wait_send_block<R: Unpin + AsyncReadExt>(&self, mut read: R) -> io::Result<R> {
+        println!("Waiting for S/B");
         loop {
             let x = read.read_u8().await?;
             if x != 'S' as u8 {
@@ -24,11 +87,13 @@ impl PunterTransfer {
             if x != 'B' as u8 {
                 continue;
             }
+            println!("Got S/B");
             return Ok(read);
         }
     }
 
     async fn wait_good<R: Unpin + AsyncRead>(&mut self, mut read: R) -> io::Result<R> {
+        println!("Waiting for GOO");
         loop {
             let x = read.read_u8().await?;
             if x != 'G' as u8 {
@@ -42,6 +107,7 @@ impl PunterTransfer {
             if x != 'O' as u8 {
                 continue;
             }
+            println!("Got GOO");
             return Ok(read);
         }
     }
@@ -51,11 +117,13 @@ impl PunterTransfer {
     }
 
     async fn send_ack<W: Unpin + AsyncWrite>(&self, mut write: W) -> io::Result<W> {
+        println!("Sent ACK");
         write.write_all(&"ACK".as_bytes()).await?;
         Ok(write)
     }
 
     async fn send_syn<W: Unpin + AsyncWrite>(&self, mut write: W) -> io::Result<W> {
+        println!("Sent SYN");
         write.write_all(&"SYN".as_bytes()).await?;
         Ok(write)
     }
