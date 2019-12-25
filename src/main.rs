@@ -204,6 +204,27 @@ impl PunterTransfer {
         Ok((success, read))
     }
 
+    async fn wait_good_or_bad<R: Unpin + AsyncReadExt>(
+        &self,
+        mut read: R,
+    ) -> io::Result<(bool, R)> {
+        println!("Waiting for GOO or BAD");
+
+        let mut buf = vec![0 as u8; 3];
+        let _ = tokio::time::timeout(Duration::from_secs(5), read.read_exact(&mut buf)).await;
+
+        if buf == vec!['G' as u8, 'O' as u8, 'O' as u8] {
+            println!("Got GOO");
+            Ok((true, read))
+        } else if buf == vec!['B' as u8, 'A' as u8, 'D' as u8] {
+            println!("Got BAD");
+            Ok((false, read))
+        } else {
+            println!("Didn't get good or bad {:?}", buf);
+            Ok((false, read))
+        }
+    }
+
     async fn wait_good_ignore<R: Unpin + AsyncRead>(&mut self, mut read: R) -> io::Result<R> {
         println!("Waiting for GOO");
         loop {
@@ -228,11 +249,13 @@ impl PunterTransfer {
     }
 
     async fn wait_good<R: Unpin + AsyncRead>(&mut self, read: R) -> io::Result<R> {
-        let read = self.wait_good_ignore(read).await?;
+        let (good, read) = self.wait_good_or_bad(read).await?;
 
-        let block_size = self.get_last_block_size();
-        self.block_num += 1;
-        self.payload = self.payload.split_off(block_size as usize);
+        if good {
+            let block_size = self.get_last_block_size();
+            self.block_num += 1;
+            self.payload = self.payload.split_off(block_size as usize);
+        }
 
         return Ok(read);
     }
