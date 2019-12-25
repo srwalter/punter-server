@@ -197,7 +197,7 @@ impl PunterTransfer {
 
         let success = buf == vec!['A' as u8, 'C' as u8, 'K' as u8];
         if success {
-            println!("Got SYN");
+            println!("Got ACK");
         } else {
             println!("Didn't get it");
         }
@@ -379,7 +379,7 @@ impl PunterTransfer {
             r = Some(read);
             w = Some(write);
 
-            if self.next_block_size == 0 {
+            if self.next_block_size < 7 {
                 break;
             }
         }
