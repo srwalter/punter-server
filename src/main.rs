@@ -2,7 +2,7 @@ use std::io;
 use std::io::Read;
 use std::net::SocketAddr;
 
-use tokio::io::{AsyncReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::prelude::*;
 
@@ -85,14 +85,17 @@ impl PunterTransfer {
         println!("Waiting for S/B");
         loop {
             let x = read.read_u8().await?;
+            println!("Got {}", x);
             if x != 'S' as u8 {
                 continue;
             }
             let x = read.read_u8().await?;
+            println!("Got {}", x);
             if x != '/' as u8 {
                 continue;
             }
             let x = read.read_u8().await?;
+            println!("Got {}", x);
             if x != 'B' as u8 {
                 continue;
             }
@@ -197,31 +200,44 @@ impl PunterTransfer {
     }
 }
 
+async fn read_line<T: AsyncBufReadExt + Unpin>(mut read: T) -> io::Result<(T, String)> {
+    let mut line = Vec::new();
+    read.read_until('\r' as u8, &mut line).await?;
+    if line[0] == 128 as u8 {
+        line.remove(0);
+    }
+    // Remove CR
+    line.pop();
+    Ok((
+        read,
+        std::str::from_utf8(&line).expect("UTF decode").to_string(),
+    ))
+}
+
 async fn handle_client(mut conn: TcpStream) -> io::Result<()> {
     let (read, mut write) = conn.split();
     let mut bufread = BufReader::new(read);
     let mut transfer = None;
 
     loop {
-        let mut line = vec![128];
-
-        bufread.read_until('\r' as u8, &mut line).await?;
-
-        println!("{:?}", line);
-        let strline = std::str::from_utf8(&line).expect("UTF decode");
+        let (buf2, strline) = read_line(bufread).await?;
+        bufread = buf2;
         println!("{}", strline);
-        write.write_all(&line).await?;
+        write.write_all(&strline.as_bytes()).await?;
         write.write_all(&"\r".as_bytes()).await?;
 
-        match &strline {
-            &"BYE" => {
+        match strline.as_ref() {
+            "BYE" => {
                 break;
             }
-            &"GET" => {
+            "GET" => {
                 write.write_all(&" WHICH FILE?\r".as_bytes()).await?;
-                bufread.read_until('\r' as u8, &mut line).await?;
-                let fname = std::str::from_utf8(&line).expect("UTF decode");
-                transfer = Some(fname.to_string());
+                let (buf2, fname) = read_line(bufread).await?;
+                bufread = buf2;
+
+                write.write_all(&fname.as_bytes()).await?;
+                write.write_all(&"\r".as_bytes()).await?;
+                transfer = Some(fname);
                 break;
             }
             _ => {
