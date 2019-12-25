@@ -6,7 +6,8 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::prelude::*;
 
-const MAX_BLOCK_SIZE: u8 = 16;
+// The largest expressible block size is 255, and that includes the header, which this number does not
+const MAX_BLOCK_SIZE: u8 = 248;
 
 struct PunterTransfer {
     payload: Vec<u8>,
