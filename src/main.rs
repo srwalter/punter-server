@@ -117,6 +117,29 @@ impl PunterTransfer {
         }
     }
 
+    async fn wait_syn<R: Unpin + AsyncReadExt>(&self, mut read: R) -> io::Result<R> {
+        println!("Waiting for SYN");
+        loop {
+            let x = read.read_u8().await?;
+            println!("Got {}", x);
+            if x != 'S' as u8 {
+                continue;
+            }
+            let x = read.read_u8().await?;
+            println!("Got {}", x);
+            if x != 'Y' as u8 {
+                continue;
+            }
+            let x = read.read_u8().await?;
+            println!("Got {}", x);
+            if x != 'N' as u8 {
+                continue;
+            }
+            println!("Got SYN");
+            return Ok(read);
+        }
+    }
+
     async fn wait_good_ignore<R: Unpin + AsyncRead>(&mut self, mut read: R) -> io::Result<R> {
         println!("Waiting for GOO");
         loop {
@@ -184,6 +207,7 @@ impl PunterTransfer {
 
         let last_block_size = self.get_last_block_size();
         let payload = &self.payload[0..last_block_size as usize];
+        println!("Sending payload len {}", payload.len());
 
         let mut header = punter::PunterHeader::new(block_num, next_block_size);
         let check_add = header.check_add(payload);
@@ -237,7 +261,8 @@ impl PunterTransfer {
 
         let read = self.wait_send_block(r.take().unwrap()).await?;
         let write = self.send_syn(w.take().unwrap()).await?;
-        let read = self.wait_send_block(read).await?;
+        let read = self.wait_syn(read).await?;
+        let write = self.send_syn(write).await?;
 
         Ok((read, write))
     }
@@ -297,7 +322,7 @@ async fn handle_client(mut conn: TcpStream) -> io::Result<()> {
 
         let mut f = std::fs::File::open(fname)?;
 
-        let payload = vec!['1' as u8];
+        let payload = vec![1 as u8];
         let mut punter = PunterTransfer::new(payload, true);
         let (bufread, write) = punter.transfer(bufread, write).await?;
 
