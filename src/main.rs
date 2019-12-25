@@ -162,10 +162,14 @@ impl PunterTransfer {
     }
 
     async fn send_block<W: Unpin + AsyncWrite>(&self, mut write: W) -> io::Result<W> {
+        let mut block_num = self.block_num;
         let block_size = self.get_next_block_size();
+        if block_size == 0 {
+            block_num |= 0xff00;
+        }
         println!("Sending block size {}", block_size);
 
-        let mut header = punter::PunterHeader::new(self.block_num, block_size);
+        let mut header = punter::PunterHeader::new(block_num, block_size);
         let check_add = header.check_add();
         let check_xor = header.check_xor();
         header.check_add = check_add;
