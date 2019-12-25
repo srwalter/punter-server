@@ -234,7 +234,7 @@ impl PunterTransfer {
         }
     }
 
-    async fn wait_good<R: Unpin + AsyncRead>(&mut self, mut read: R) -> io::Result<R> {
+    async fn wait_good<R: Unpin + AsyncRead>(&mut self, read: R) -> io::Result<R> {
         let read = self.wait_good_ignore(read).await?;
 
         let block_size = self.get_last_block_size();
@@ -445,7 +445,7 @@ async fn handle_client(mut conn: TcpStream) -> io::Result<()> {
 
         let payload = vec![];
         let mut punter = PunterTransfer::new(payload, false);
-        let (bufread, write) = punter.download(bufread, write).await?;
+        let (_bufread, _write) = punter.download(bufread, write).await?;
         println!("Received {} bytes", punter.payload.len());
     } else if let Some(fname) = transfer {
         let fname = fname.to_lowercase().to_string();
@@ -462,7 +462,7 @@ async fn handle_client(mut conn: TcpStream) -> io::Result<()> {
         let mut payload = Vec::new();
         f.read_to_end(&mut payload)?;
         let mut punter = PunterTransfer::new(payload, false);
-        let (bufread, write) = punter.upload(bufread, write).await?;
+        let (_bufread, _write) = punter.upload(bufread, write).await?;
     }
 
     Ok(())
