@@ -39,7 +39,8 @@ mod punter {
             let mut cursor = io::Cursor::new(vec![7]);
             cursor.write_all(&self.check_add.to_le_bytes()).unwrap();
             cursor.write_all(&self.check_xor.to_le_bytes()).unwrap();
-            cursor.write_all(&[self.block_size]).unwrap();
+            // Size includes this header, which is 7 bytes
+            cursor.write_all(&[self.block_size + 7]).unwrap();
             cursor.write_all(&self.block_num.to_le_bytes()).unwrap();
 
             cursor.into_inner()
