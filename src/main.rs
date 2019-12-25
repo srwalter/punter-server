@@ -43,7 +43,7 @@ mod punter {
             cursor.into_inner()
         }
 
-        pub fn check_add(&self) -> u16 {
+        pub fn check_add(&self, payload: &[u8]) -> u16 {
             let mut sum: u16 = 0;
             let bytes = self.to_bytes();
 
@@ -51,16 +51,29 @@ mod punter {
                 sum += *b as u16;
             }
 
+            for b in payload {
+                sum += *b as u16;
+            }
+
             sum
         }
 
-        pub fn check_xor(&self) -> u16 {
+        pub fn check_xor(&self, payload: &[u8]) -> u16 {
             let mut sum: u16 = 0;
             let bytes = self.to_bytes();
 
             for b in &bytes {
                 sum ^= *b as u16;
-                let high_bit = 0x8000;
+                let high_bit = sum & 0x8000;
+                sum <<= 1;
+                if high_bit != 0 {
+                    sum |= 1;
+                }
+            }
+
+            for b in payload {
+                sum ^= *b as u16;
+                let high_bit = sum & 0x8000;
                 sum <<= 1;
                 if high_bit != 0 {
                     sum |= 1;
@@ -169,16 +182,17 @@ impl PunterTransfer {
         }
         println!("Sending block size {}", block_size);
 
+        let payload = &self.payload[0..block_size as usize];
+
         let mut header = punter::PunterHeader::new(block_num, block_size);
-        let check_add = header.check_add();
-        let check_xor = header.check_xor();
+        let check_add = header.check_add(payload);
+        let check_xor = header.check_xor(payload);
         header.check_add = check_add;
         header.check_xor = check_xor;
         let header_bytes = header.to_bytes();
+        println!("Sending block {:?}", header_bytes);
         write.write_all(&header_bytes).await?;
-        write
-            .write_all(&self.payload[0..block_size as usize])
-            .await?;
+        write.write_all(payload).await?;
 
         Ok(write)
     }
