@@ -104,32 +104,40 @@ impl PunterTransfer {
         }
     }
 
-    async fn wait_good<R: Unpin + AsyncRead>(&mut self, mut read: R) -> io::Result<R> {
+    async fn wait_good_ignore<R: Unpin + AsyncRead>(&mut self, mut read: R) -> io::Result<R> {
         println!("Waiting for GOO");
         loop {
             let x = read.read_u8().await?;
+            println!("Got {}", x);
             if x != 'G' as u8 {
                 continue;
             }
             let x = read.read_u8().await?;
+            println!("Got {}", x);
             if x != 'O' as u8 {
                 continue;
             }
             let x = read.read_u8().await?;
+            println!("Got {}", x);
             if x != 'O' as u8 {
                 continue;
             }
             println!("Got GOO");
-
-            let block_size = self.get_block_size();
-            self.block_num += 1;
-            self.payload = self.payload.split_off(block_size as usize);
-
             return Ok(read);
         }
     }
 
-    fn get_block_size(&self) -> u8 {
+    async fn wait_good<R: Unpin + AsyncRead>(&mut self, mut read: R) -> io::Result<R> {
+        let read = self.wait_good_ignore(read).await?;
+
+        let block_size = self.get_last_block_size();
+        self.block_num += 1;
+        self.payload = self.payload.split_off(block_size as usize);
+
+        return Ok(read);
+    }
+
+    fn get_last_block_size(&self) -> u8 {
         if self.block_num == 0 && !self.metadata_block {
             // For non-metadata blocks, the first block is a bare header
             0
@@ -141,8 +149,21 @@ impl PunterTransfer {
         }
     }
 
+    fn get_next_block_size(&self) -> u8 {
+        if self.payload.len() > 255 {
+            if self.payload.len() - 255 > 255 {
+                255
+            } else {
+                (self.payload.len() - 255) as u8
+            }
+        } else {
+            0 as u8
+        }
+    }
+
     async fn send_block<W: Unpin + AsyncWrite>(&self, mut write: W) -> io::Result<W> {
-        let block_size = self.get_block_size();
+        let block_size = self.get_next_block_size();
+        println!("Sending block size {}", block_size);
 
         let mut header = punter::PunterHeader::new(self.block_num, block_size);
         let check_add = header.check_add();
@@ -175,6 +196,9 @@ impl PunterTransfer {
         read: R,
         write: W,
     ) -> io::Result<(R, W)> {
+        let read = self.wait_good_ignore(read).await?;
+        let write = self.send_ack(write).await?;
+
         let mut r = Some(read);
         let mut w = Some(write);
 
