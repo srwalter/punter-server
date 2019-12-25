@@ -142,7 +142,7 @@ impl PunterTransfer {
     }
 
     async fn wait_block<R: Unpin + AsyncReadExt>(&mut self, mut read: R) -> io::Result<R> {
-        println!("Waiting for block ({} bytes", self.next_block_size);
+        println!("Waiting for block ({} bytes)", self.next_block_size);
 
         let mut buf = vec![0 as u8; self.next_block_size as usize];
         read.read_exact(&mut buf).await?;
@@ -154,7 +154,7 @@ impl PunterTransfer {
             self.payload.extend_from_slice(&buf[7..]);
         }
 
-        self.next_block_size = if header.block_num & 0xff00 == 0xff {
+        self.next_block_size = if header.block_num & 0xff00 == 0xff || self.metadata_block {
             0
         } else {
             header.block_size
@@ -378,6 +378,8 @@ impl PunterTransfer {
         let write = self.send_sb(w.take().unwrap()).await?;
         let read = self.wait_syn(r.take().unwrap()).await?;
         let write = self.send_syn(write).await?;
+        let read = self.wait_send_block(read).await?;
+        let read = self.wait_send_block(read).await?;
         let read = self.wait_send_block(read).await?;
 
         Ok((read, write))
