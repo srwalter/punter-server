@@ -13,9 +13,11 @@ struct PunterTransfer {
     payload: Vec<u8>,
     metadata_block: bool,
     block_num: u16,
+    next_block_size: u8,
 }
 
 mod punter {
+    use std::convert::TryInto;
     use std::io;
     use std::io::prelude::*;
 
@@ -31,6 +33,22 @@ mod punter {
             PunterHeader {
                 check_add: 0,
                 check_xor: 0,
+                block_size,
+                block_num,
+            }
+        }
+
+        pub fn from_bytes(bytes: &[u8]) -> PunterHeader {
+            assert_eq!(bytes.len(), 7);
+
+            let check_add = u16::from_le_bytes(bytes[0..2].try_into().unwrap());
+            let check_xor = u16::from_le_bytes(bytes[2..4].try_into().unwrap());
+            let block_size = bytes[4];
+            let block_num = u16::from_le_bytes(bytes[5..7].try_into().unwrap());
+
+            PunterHeader {
+                check_add,
+                check_xor,
                 block_size,
                 block_num,
             }
@@ -91,10 +109,12 @@ mod punter {
 
 impl PunterTransfer {
     fn new(payload: Vec<u8>, metadata_block: bool) -> Self {
+        let next_block_size = if metadata_block { 8 } else { 7 };
         PunterTransfer {
             payload,
             metadata_block,
             block_num: 0,
+            next_block_size,
         }
     }
 
@@ -121,6 +141,30 @@ impl PunterTransfer {
         }
     }
 
+    async fn wait_block<R: Unpin + AsyncReadExt>(&mut self, mut read: R) -> io::Result<R> {
+        println!("Waiting for block ({} bytes", self.next_block_size);
+
+        let mut buf = vec![0 as u8; self.next_block_size as usize];
+        read.read_exact(&mut buf).await?;
+
+        let header = &buf[0..7];
+        let header = punter::PunterHeader::from_bytes(header);
+
+        if self.next_block_size > 7 {
+            self.payload.extend_from_slice(&buf[7..]);
+        }
+
+        self.next_block_size = if header.block_num & 0xff00 == 0xff {
+            0
+        } else {
+            header.block_size
+        };
+
+        // XXX: verify checksum
+
+        Ok(read)
+    }
+
     async fn wait_syn<R: Unpin + AsyncReadExt>(&self, mut read: R) -> io::Result<R> {
         println!("Waiting for SYN");
         loop {
@@ -137,6 +181,29 @@ impl PunterTransfer {
             let x = read.read_u8().await?;
             println!("Got {}", x);
             if x != 'N' as u8 {
+                continue;
+            }
+            println!("Got SYN");
+            return Ok(read);
+        }
+    }
+
+    async fn wait_ack<R: Unpin + AsyncReadExt>(&self, mut read: R) -> io::Result<R> {
+        println!("Waiting for SYN");
+        loop {
+            let x = read.read_u8().await?;
+            println!("Got {}", x);
+            if x != 'A' as u8 {
+                continue;
+            }
+            let x = read.read_u8().await?;
+            println!("Got {}", x);
+            if x != 'C' as u8 {
+                continue;
+            }
+            let x = read.read_u8().await?;
+            println!("Got {}", x);
+            if x != 'K' as u8 {
                 continue;
             }
             println!("Got SYN");
@@ -232,6 +299,12 @@ impl PunterTransfer {
         Ok(write)
     }
 
+    async fn send_goo<W: Unpin + AsyncWrite>(&self, mut write: W) -> io::Result<W> {
+        println!("Sent GOO");
+        write.write_all(&"GOO".as_bytes()).await?;
+        Ok(write)
+    }
+
     async fn send_sb<W: Unpin + AsyncWrite>(&self, mut write: W) -> io::Result<W> {
         println!("Sent S/B");
         write.write_all(&"S/B".as_bytes()).await?;
@@ -244,7 +317,7 @@ impl PunterTransfer {
         Ok(write)
     }
 
-    async fn transfer<R: AsyncReadExt + Unpin, W: AsyncWrite + Unpin>(
+    async fn upload<R: AsyncReadExt + Unpin, W: AsyncWrite + Unpin>(
         &mut self,
         read: R,
         write: W,
@@ -276,6 +349,39 @@ impl PunterTransfer {
 
         Ok((read, write))
     }
+
+    async fn download<R: AsyncReadExt + Unpin, W: AsyncWrite + Unpin>(
+        &mut self,
+        read: R,
+        write: W,
+    ) -> io::Result<(R, W)> {
+        let write = self.send_goo(write).await?;
+        let read = self.wait_ack(read).await?;
+
+        let mut r = Some(read);
+        let mut w = Some(write);
+
+        loop {
+            let write = self.send_sb(w.take().unwrap()).await?;
+            let read = self.wait_block(r.take().unwrap()).await?;
+            let write = self.send_goo(write).await?;
+            let read = self.wait_ack(read).await?;
+
+            r = Some(read);
+            w = Some(write);
+
+            if self.next_block_size == 0 {
+                break;
+            }
+        }
+
+        let write = self.send_sb(w.take().unwrap()).await?;
+        let read = self.wait_syn(r.take().unwrap()).await?;
+        let write = self.send_syn(write).await?;
+        let read = self.wait_send_block(read).await?;
+
+        Ok((read, write))
+    }
 }
 
 async fn read_line<T: AsyncBufReadExt + Unpin>(mut read: T) -> io::Result<(T, String)> {
@@ -296,6 +402,7 @@ async fn handle_client(mut conn: TcpStream) -> io::Result<()> {
     let (read, mut write) = conn.split();
     let mut bufread = BufReader::new(read);
     let mut transfer = None;
+    let mut download = false;
 
     loop {
         let (buf2, strline) = read_line(bufread).await?;
@@ -318,13 +425,29 @@ async fn handle_client(mut conn: TcpStream) -> io::Result<()> {
                 transfer = Some(fname);
                 break;
             }
+            "PUT" => {
+                download = true;
+                break;
+            }
             _ => {
                 write.write_all(&" WAT?\r".as_bytes()).await?;
             }
         }
     }
 
-    if let Some(fname) = transfer {
+    if download {
+        write.write_all(&" READY TO RECEIVE\r".as_bytes()).await?;
+
+        let payload = vec![];
+        let mut punter = PunterTransfer::new(payload, true);
+        let (bufread, write) = punter.download(bufread, write).await?;
+        println!("File type {:?}", punter.payload);
+
+        let payload = vec![];
+        let mut punter = PunterTransfer::new(payload, false);
+        let (bufread, write) = punter.download(bufread, write).await?;
+        println!("Received {} bytes", punter.payload.len());
+    } else if let Some(fname) = transfer {
         let fname = fname.to_lowercase().to_string();
 
         println!("Transferring {}", fname);
@@ -334,12 +457,12 @@ async fn handle_client(mut conn: TcpStream) -> io::Result<()> {
 
         let payload = vec![1 as u8];
         let mut punter = PunterTransfer::new(payload, true);
-        let (bufread, write) = punter.transfer(bufread, write).await?;
+        let (bufread, write) = punter.upload(bufread, write).await?;
 
         let mut payload = Vec::new();
         f.read_to_end(&mut payload)?;
         let mut punter = PunterTransfer::new(payload, false);
-        let (bufread, write) = punter.transfer(bufread, write).await?;
+        let (bufread, write) = punter.upload(bufread, write).await?;
     }
 
     Ok(())
