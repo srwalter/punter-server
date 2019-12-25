@@ -1,6 +1,7 @@
 use std::io;
 use std::io::Read;
 use std::net::SocketAddr;
+use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
@@ -188,27 +189,19 @@ impl PunterTransfer {
         }
     }
 
-    async fn wait_ack<R: Unpin + AsyncReadExt>(&self, mut read: R) -> io::Result<R> {
-        println!("Waiting for SYN");
-        loop {
-            let x = read.read_u8().await?;
-            println!("Got {}", x);
-            if x != 'A' as u8 {
-                continue;
-            }
-            let x = read.read_u8().await?;
-            println!("Got {}", x);
-            if x != 'C' as u8 {
-                continue;
-            }
-            let x = read.read_u8().await?;
-            println!("Got {}", x);
-            if x != 'K' as u8 {
-                continue;
-            }
+    async fn wait_ack<R: Unpin + AsyncReadExt>(&self, mut read: R) -> io::Result<(bool, R)> {
+        println!("Waiting for ACK");
+
+        let mut buf = vec![0 as u8; 3];
+        let _ = tokio::time::timeout(Duration::from_secs(5), read.read_exact(&mut buf)).await;
+
+        let success = buf == vec!['A' as u8, 'C' as u8, 'K' as u8];
+        if success {
             println!("Got SYN");
-            return Ok(read);
+        } else {
+            println!("Didn't get it");
         }
+        Ok((success, read))
     }
 
     async fn wait_good_ignore<R: Unpin + AsyncRead>(&mut self, mut read: R) -> io::Result<R> {
@@ -355,17 +348,33 @@ impl PunterTransfer {
         read: R,
         write: W,
     ) -> io::Result<(R, W)> {
-        let write = self.send_goo(write).await?;
-        let read = self.wait_ack(read).await?;
+        let read = if self.metadata_block {
+            self.wait_good(read).await?
+        } else {
+            read
+        };
 
         let mut r = Some(read);
         let mut w = Some(write);
 
         loop {
+            let write = self.send_goo(w.take().unwrap()).await?;
+            let (success, read) = self.wait_ack(r.take().unwrap()).await?;
+
+            r = Some(read);
+            w = Some(write);
+
+            if success {
+                break;
+            }
+        }
+
+        loop {
             let write = self.send_sb(w.take().unwrap()).await?;
             let read = self.wait_block(r.take().unwrap()).await?;
             let write = self.send_goo(write).await?;
-            let read = self.wait_ack(read).await?;
+            let (success, read) = self.wait_ack(read).await?;
+            assert!(success);
 
             r = Some(read);
             w = Some(write);
