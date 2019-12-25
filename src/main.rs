@@ -6,6 +6,8 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::prelude::*;
 
+const MAX_BLOCK_SIZE: u8 = 16;
+
 struct PunterTransfer {
     payload: Vec<u8>,
     metadata_block: bool,
@@ -177,20 +179,20 @@ impl PunterTransfer {
         if self.block_num == 0 && !self.metadata_block {
             // For non-metadata blocks, the first block is a bare header
             0
-        } else if self.payload.len() > 255 {
+        } else if self.payload.len() > MAX_BLOCK_SIZE as usize {
             // Otherwise, send as much as we can
-            255 as u8
+            MAX_BLOCK_SIZE as u8
         } else {
             self.payload.len() as u8
         }
     }
 
     fn get_next_block_size(&self) -> u8 {
-        if self.payload.len() > 255 {
-            if self.payload.len() - 255 > 255 {
-                255
+        if self.payload.len() > MAX_BLOCK_SIZE as usize {
+            if self.payload.len() - MAX_BLOCK_SIZE as usize > MAX_BLOCK_SIZE as usize {
+                MAX_BLOCK_SIZE
             } else {
-                (self.payload.len() - 255) as u8
+                (self.payload.len() - MAX_BLOCK_SIZE as usize) as u8
             }
         } else {
             0 as u8
