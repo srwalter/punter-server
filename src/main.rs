@@ -228,6 +228,12 @@ impl PunterTransfer {
         Ok(write)
     }
 
+    async fn send_sb<W: Unpin + AsyncWrite>(&self, mut write: W) -> io::Result<W> {
+        println!("Sent S/B");
+        write.write_all(&"S/B".as_bytes()).await?;
+        Ok(write)
+    }
+
     async fn send_syn<W: Unpin + AsyncWrite>(&self, mut write: W) -> io::Result<W> {
         println!("Sent SYN");
         write.write_all(&"SYN".as_bytes()).await?;
@@ -262,7 +268,7 @@ impl PunterTransfer {
         let read = self.wait_send_block(r.take().unwrap()).await?;
         let write = self.send_syn(w.take().unwrap()).await?;
         let read = self.wait_syn(read).await?;
-        let write = self.send_syn(write).await?;
+        let write = self.send_sb(write).await?;
 
         Ok((read, write))
     }
