@@ -126,6 +126,7 @@ impl PunterTransfer {
     }
 
     async fn wait_send_block<R: Unpin + AsyncReadExt>(&self, mut read: R) -> io::Result<R> {
+        // XXX: should handle good/bad here and not send a block in that case
         println!("Waiting for S/B");
         loop {
             let x = read.read_u8().await?;
@@ -359,32 +360,28 @@ impl PunterTransfer {
 
     async fn upload<R: AsyncReadExt + Unpin, W: AsyncWrite + Unpin>(
         &mut self,
-        read: R,
-        write: W,
+        mut read: R,
+        mut write: W,
     ) -> io::Result<(R, W)> {
-        let read = self.wait_good_ignore(read).await?;
-        let write = self.send_ack(write).await?;
-
-        let mut r = Some(read);
-        let mut w = Some(write);
+        read = self.wait_good_ignore(read).await?;
+        write = self.send_ack(write).await?;
 
         loop {
-            let read = self.wait_send_block(r.take().unwrap()).await?;
-            let write = self.send_block(w.take().unwrap()).await?;
-            let (read, write) = self.wait_good(read, write).await?;
-
-            r = Some(read);
-            w = Some(write);
+            read = self.wait_send_block(read).await?;
+            write = self.send_block(write).await?;
+            let x = self.wait_good(read, write).await?;
+            read = x.0;
+            write = x.1;
 
             if self.payload.len() == 0 {
                 break;
             }
         }
 
-        let read = self.wait_send_block(r.take().unwrap()).await?;
-        let write = self.send_syn(w.take().unwrap()).await?;
-        let read = self.wait_syn(read).await?;
-        let write = self.send_sb(write).await?;
+        read = self.wait_send_block(read).await?;
+        write = self.send_syn(write).await?;
+        read = self.wait_syn(read).await?;
+        write = self.send_sb(write).await?;
 
         Ok((read, write))
     }
