@@ -125,25 +125,27 @@ impl PunterTransfer {
         }
     }
 
-    async fn wait_send_block<R: Unpin + AsyncReadExt>(&self, mut read: R) -> io::Result<R> {
-        println!("Waiting for S/B");
+    async fn wait_word<R: Unpin + AsyncReadExt>(
+        mut read: R,
+        word: (char, char, char),
+    ) -> io::Result<R> {
         loop {
             let x = read.read_u8().await?;
             println!("Got {}", x);
-            if x != 'S' as u8 {
+            if x != word.0 as u8 {
                 continue;
             }
             let x = read.read_u8().await?;
             println!("Got {}", x);
-            if x != '/' as u8 {
+            if x != word.1 as u8 {
                 continue;
             }
             let x = read.read_u8().await?;
             println!("Got {}", x);
-            if x != 'B' as u8 {
+            if x != word.2 as u8 {
                 continue;
             }
-            println!("Got S/B");
+            println!("  Got it!");
             return Ok(read);
         }
     }
@@ -172,50 +174,19 @@ impl PunterTransfer {
         Ok(read)
     }
 
-    async fn wait_syn<R: Unpin + AsyncReadExt>(&self, mut read: R) -> io::Result<R> {
-        println!("Waiting for SYN");
-        loop {
-            let x = read.read_u8().await?;
-            println!("Got {}", x);
-            if x != 'S' as u8 {
-                continue;
-            }
-            let x = read.read_u8().await?;
-            println!("Got {}", x);
-            if x != 'Y' as u8 {
-                continue;
-            }
-            let x = read.read_u8().await?;
-            println!("Got {}", x);
-            if x != 'N' as u8 {
-                continue;
-            }
-            println!("Got SYN");
-            return Ok(read);
-        }
+    async fn wait_send_block<R: Unpin + AsyncReadExt>(&self, read: R) -> io::Result<R> {
+        println!("Waiting for S/B");
+        Self::wait_word(read, ('S', '/', 'B')).await
     }
 
-    async fn wait_good<R: Unpin + AsyncRead>(&mut self, mut read: R) -> io::Result<R> {
+    async fn wait_syn<R: Unpin + AsyncReadExt>(&self, read: R) -> io::Result<R> {
+        println!("Waiting for SYN");
+        Self::wait_word(read, ('S', 'Y', 'N')).await
+    }
+
+    async fn wait_good<R: Unpin + AsyncRead>(&mut self, read: R) -> io::Result<R> {
         println!("Waiting for GOO");
-        loop {
-            let x = read.read_u8().await?;
-            println!("Got {}", x);
-            if x != 'G' as u8 {
-                continue;
-            }
-            let x = read.read_u8().await?;
-            println!("Got {}", x);
-            if x != 'O' as u8 {
-                continue;
-            }
-            let x = read.read_u8().await?;
-            println!("Got {}", x);
-            if x != 'O' as u8 {
-                continue;
-            }
-            println!("Got GOO");
-            return Ok(read);
-        }
+        Self::wait_word(read, ('G', 'O', 'O')).await
     }
 
     async fn wait_ack<R: Unpin + AsyncReadExt>(&self, mut read: R) -> io::Result<(bool, R)> {
