@@ -85,16 +85,7 @@ mod punter {
             let mut sum: u16 = 0;
             let bytes = self.to_bytes();
 
-            for b in &bytes {
-                sum ^= *b as u16;
-                let high_bit = sum & 0x8000;
-                sum <<= 1;
-                if high_bit != 0 {
-                    sum |= 1;
-                }
-            }
-
-            for b in payload {
+            for b in bytes.iter().chain(payload) {
                 sum ^= *b as u16;
                 let high_bit = sum & 0x8000;
                 sum <<= 1;
