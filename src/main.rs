@@ -345,9 +345,8 @@ impl PunterTransfer {
         write = Self::send_ack(write).await?;
 
         loop {
-            let x = Self::wait_rx_word(read).await?;
-            let good = x.0;
-            read = x.1;
+            let (good, read2) = Self::wait_rx_word(read).await?;
+            read = read2;
 
             match good {
                 GoodBadSb::Good => {
@@ -389,9 +388,8 @@ impl PunterTransfer {
 
         loop {
             write = Self::send_goo(write).await?;
-            let x = Self::wait_ack(read).await?;
-            let success = x.0;
-            read = x.1;
+            let (success, read2) = Self::wait_ack(read).await?;
+            read = read2;
 
             if success {
                 break;
@@ -423,9 +421,8 @@ impl PunterTransfer {
                 } else {
                     write = Self::send_bad(write).await?;
                 }
-                let x = Self::wait_ack(read).await?;
-                let success = x.0;
-                read = x.1;
+                let (success, read2) = Self::wait_ack(read).await?;
+                read = read2;
 
                 if success {
                     break;
