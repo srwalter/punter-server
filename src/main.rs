@@ -126,7 +126,6 @@ impl PunterTransfer {
     }
 
     async fn wait_send_block<R: Unpin + AsyncReadExt>(&self, mut read: R) -> io::Result<R> {
-        // XXX: should handle good/bad here and not send a block in that case
         println!("Waiting for S/B");
         loop {
             let x = read.read_u8().await?;
@@ -154,7 +153,7 @@ impl PunterTransfer {
         read: R,
         mut write: W,
     ) -> io::Result<(R, W)> {
-        let (good, read) = self.wait_good_or_bad(read).await?;
+        let (good, read) = self.wait_rx_word(read).await?;
 
         match good {
             GoodBadSb::Sb => {
@@ -217,7 +216,7 @@ impl PunterTransfer {
         println!("Waiting for ACK");
 
         let mut buf = vec![0 as u8; 3];
-        let _ = tokio::time::timeout(Duration::from_secs(5), read.read_exact(&mut buf)).await;
+        let _ = tokio::time::timeout(Duration::from_secs(1), read.read_exact(&mut buf)).await;
 
         let success = buf == vec!['A' as u8, 'C' as u8, 'K' as u8];
         if success {
@@ -228,7 +227,7 @@ impl PunterTransfer {
         Ok((success, read))
     }
 
-    async fn wait_good_or_bad<R: Unpin + AsyncReadExt>(
+    async fn wait_rx_word<R: Unpin + AsyncReadExt>(
         &self,
         mut read: R,
     ) -> io::Result<(GoodBadSb, R)> {
@@ -236,7 +235,7 @@ impl PunterTransfer {
 
         loop {
             let mut buf = vec![0 as u8; 3];
-            let _ = tokio::time::timeout(Duration::from_secs(10), read.read_exact(&mut buf)).await;
+            let _ = tokio::time::timeout(Duration::from_secs(1), read.read_exact(&mut buf)).await;
 
             if buf == vec!['G' as u8, 'O' as u8, 'O' as u8] {
                 println!("Got GOO");
@@ -256,7 +255,7 @@ impl PunterTransfer {
         }
     }
 
-    async fn wait_good_ignore<R: Unpin + AsyncRead>(&mut self, mut read: R) -> io::Result<R> {
+    async fn wait_good<R: Unpin + AsyncRead>(&mut self, mut read: R) -> io::Result<R> {
         println!("Waiting for GOO");
         loop {
             let x = read.read_u8().await?;
@@ -279,15 +278,16 @@ impl PunterTransfer {
         }
     }
 
-    async fn wait_good<R: Unpin + AsyncRead, W: Unpin + AsyncWrite>(
+    async fn maybe_send_ack<R: Unpin + AsyncRead, W: Unpin + AsyncWrite>(
         &mut self,
         read: R,
         mut write: W,
     ) -> io::Result<(R, W)> {
-        let (good, read) = self.wait_good_or_bad(read).await?;
+        let (good, read) = self.wait_rx_word(read).await?;
 
         match good {
             GoodBadSb::Good => {
+                // Packet acknowledged, so we can send different data next time
                 let block_size = self.get_last_block_size();
                 self.block_num += 1;
                 self.payload = self.payload.split_off(block_size as usize);
@@ -380,7 +380,7 @@ impl PunterTransfer {
         mut read: R,
         mut write: W,
     ) -> io::Result<(R, W)> {
-        read = self.wait_good_ignore(read).await?;
+        read = self.wait_good(read).await?;
         write = self.send_ack(write).await?;
 
         loop {
@@ -388,7 +388,7 @@ impl PunterTransfer {
             read = x.0;
             write = x.1;
 
-            let x = self.wait_good(read, write).await?;
+            let x = self.maybe_send_ack(read, write).await?;
             read = x.0;
             write = x.1;
 
