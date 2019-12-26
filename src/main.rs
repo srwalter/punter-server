@@ -496,6 +496,27 @@ async fn handle_client(mut conn: TcpStream) -> io::Result<()> {
                 transfer = Some(fname);
                 break;
             }
+            "CD" => {
+                write.write_all(&" WHERE?\r".as_bytes()).await?;
+                let (buf2, write2, fname) = read_line(bufread, write).await?;
+                bufread = buf2;
+                write = write2;
+
+                // Sanitize filename
+                let fname = fname.to_lowercase();
+                let fname: String = fname.chars().filter(|x| x.is_alphanumeric()).collect();
+                std::env::set_current_dir(fname)?;
+            }
+            "DIR" => {
+                let entries = std::fs::read_dir(std::env::current_dir()?)?;
+                for e in entries {
+                    write
+                        .write_all(
+                            &format!("{}\r", e?.file_name().into_string().unwrap()).as_bytes(),
+                        )
+                        .await?;
+                }
+            }
             "PUT" => {
                 download = true;
                 break;
