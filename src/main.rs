@@ -519,7 +519,12 @@ async fn handle_client(mut conn: TcpStream) -> io::Result<()> {
         let (_bufread, _write) = punter.download(bufread, write).await?;
         println!("Received {} bytes", punter.payload.len());
     } else if let Some(fname) = transfer {
-        let fname = fname.to_lowercase().to_string();
+        // Sanitize filename
+        let fname = fname.to_lowercase();
+        let fname: String = fname
+            .chars()
+            .filter(|x| x.is_alphanumeric() || *x == '.')
+            .collect();
 
         println!("Transferring {}", fname);
         write.write_all(&" SENDING NOW\r".as_bytes()).await?;
