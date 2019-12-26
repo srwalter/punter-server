@@ -149,6 +149,23 @@ impl PunterTransfer {
         }
     }
 
+    async fn maybe_send_block<R: Unpin + AsyncReadExt, W: Unpin + AsyncWrite>(
+        &self,
+        read: R,
+        mut write: W,
+    ) -> io::Result<(R, W)> {
+        let (good, read) = self.wait_good_or_bad(read).await?;
+
+        match good {
+            GoodBadSb::Sb => {
+                write = self.send_block(write).await?;
+            }
+            _ => (),
+        }
+
+        return Ok((read, write));
+    }
+
     async fn wait_block<R: Unpin + AsyncReadExt>(&mut self, mut read: R) -> io::Result<R> {
         println!("Waiting for block ({} bytes)", self.next_block_size);
 
@@ -367,8 +384,10 @@ impl PunterTransfer {
         write = self.send_ack(write).await?;
 
         loop {
-            read = self.wait_send_block(read).await?;
-            write = self.send_block(write).await?;
+            let x = self.maybe_send_block(read, write).await?;
+            read = x.0;
+            write = x.1;
+
             let x = self.wait_good(read, write).await?;
             read = x.0;
             write = x.1;
