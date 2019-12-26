@@ -221,7 +221,7 @@ impl PunterTransfer {
         if success {
             println!("Got ACK");
         } else {
-            println!("Didn't get it");
+            println!("Didn't get it {:?}", buf);
             // We're out-of-sync, so flush anything still in the buffer
             let mut buf = Vec::new();
             let _ =
