@@ -174,22 +174,22 @@ impl PunterTransfer {
         Ok(read)
     }
 
-    async fn wait_send_block<R: Unpin + AsyncReadExt>(&self, read: R) -> io::Result<R> {
+    async fn wait_send_block<R: Unpin + AsyncReadExt>(read: R) -> io::Result<R> {
         println!("Waiting for S/B");
         Self::wait_word(read, ('S', '/', 'B')).await
     }
 
-    async fn wait_syn<R: Unpin + AsyncReadExt>(&self, read: R) -> io::Result<R> {
+    async fn wait_syn<R: Unpin + AsyncReadExt>(read: R) -> io::Result<R> {
         println!("Waiting for SYN");
         Self::wait_word(read, ('S', 'Y', 'N')).await
     }
 
-    async fn wait_good<R: Unpin + AsyncRead>(&mut self, read: R) -> io::Result<R> {
+    async fn wait_good<R: Unpin + AsyncRead>(read: R) -> io::Result<R> {
         println!("Waiting for GOO");
         Self::wait_word(read, ('G', 'O', 'O')).await
     }
 
-    async fn wait_ack<R: Unpin + AsyncReadExt>(&self, mut read: R) -> io::Result<(bool, R)> {
+    async fn wait_ack<R: Unpin + AsyncReadExt>(mut read: R) -> io::Result<(bool, R)> {
         println!("Waiting for ACK");
 
         let mut buf = vec![0 as u8; 3];
@@ -204,10 +204,7 @@ impl PunterTransfer {
         Ok((success, read))
     }
 
-    async fn wait_rx_word<R: Unpin + AsyncReadExt>(
-        &self,
-        mut read: R,
-    ) -> io::Result<(GoodBadSb, R)> {
+    async fn wait_rx_word<R: Unpin + AsyncReadExt>(mut read: R) -> io::Result<(GoodBadSb, R)> {
         println!("Waiting for GOO or BAD");
 
         loop {
@@ -237,7 +234,7 @@ impl PunterTransfer {
         read: R,
         mut write: W,
     ) -> io::Result<(R, W)> {
-        let (good, read) = self.wait_rx_word(read).await?;
+        let (good, read) = Self::wait_rx_word(read).await?;
 
         match good {
             GoodBadSb::Sb => {
@@ -254,7 +251,7 @@ impl PunterTransfer {
         read: R,
         mut write: W,
     ) -> io::Result<(R, W)> {
-        let (good, read) = self.wait_rx_word(read).await?;
+        let (good, read) = Self::wait_rx_word(read).await?;
 
         match good {
             GoodBadSb::Good => {
@@ -262,10 +259,10 @@ impl PunterTransfer {
                 let block_size = self.get_last_block_size();
                 self.block_num += 1;
                 self.payload = self.payload.split_off(block_size as usize);
-                write = self.send_ack(write).await?;
+                write = Self::send_ack(write).await?;
             }
             GoodBadSb::Bad => {
-                write = self.send_ack(write).await?;
+                write = Self::send_ack(write).await?;
             }
             GoodBadSb::Sb => (),
         }
@@ -322,25 +319,25 @@ impl PunterTransfer {
         Ok(write)
     }
 
-    async fn send_ack<W: Unpin + AsyncWrite>(&self, mut write: W) -> io::Result<W> {
+    async fn send_ack<W: Unpin + AsyncWrite>(mut write: W) -> io::Result<W> {
         println!("Sent ACK");
         write.write_all(&"ACK".as_bytes()).await?;
         Ok(write)
     }
 
-    async fn send_goo<W: Unpin + AsyncWrite>(&self, mut write: W) -> io::Result<W> {
+    async fn send_goo<W: Unpin + AsyncWrite>(mut write: W) -> io::Result<W> {
         println!("Sent GOO");
         write.write_all(&"GOO".as_bytes()).await?;
         Ok(write)
     }
 
-    async fn send_sb<W: Unpin + AsyncWrite>(&self, mut write: W) -> io::Result<W> {
+    async fn send_sb<W: Unpin + AsyncWrite>(mut write: W) -> io::Result<W> {
         println!("Sent S/B");
         write.write_all(&"S/B".as_bytes()).await?;
         Ok(write)
     }
 
-    async fn send_syn<W: Unpin + AsyncWrite>(&self, mut write: W) -> io::Result<W> {
+    async fn send_syn<W: Unpin + AsyncWrite>(mut write: W) -> io::Result<W> {
         println!("Sent SYN");
         write.write_all(&"SYN".as_bytes()).await?;
         Ok(write)
@@ -351,8 +348,8 @@ impl PunterTransfer {
         mut read: R,
         mut write: W,
     ) -> io::Result<(R, W)> {
-        read = self.wait_good(read).await?;
-        write = self.send_ack(write).await?;
+        read = Self::wait_good(read).await?;
+        write = Self::send_ack(write).await?;
 
         loop {
             let x = self.maybe_send_block(read, write).await?;
@@ -368,10 +365,10 @@ impl PunterTransfer {
             }
         }
 
-        read = self.wait_send_block(read).await?;
-        write = self.send_syn(write).await?;
-        read = self.wait_syn(read).await?;
-        write = self.send_sb(write).await?;
+        read = Self::wait_send_block(read).await?;
+        write = Self::send_syn(write).await?;
+        read = Self::wait_syn(read).await?;
+        write = Self::send_sb(write).await?;
 
         Ok((read, write))
     }
@@ -382,12 +379,12 @@ impl PunterTransfer {
         mut write: W,
     ) -> io::Result<(R, W)> {
         if self.metadata_block {
-            read = self.wait_good(read).await?
+            read = Self::wait_good(read).await?
         };
 
         loop {
-            write = self.send_goo(write).await?;
-            let x = self.wait_ack(read).await?;
+            write = Self::send_goo(write).await?;
+            let x = Self::wait_ack(read).await?;
             let success = x.0;
             read = x.1;
 
@@ -397,10 +394,10 @@ impl PunterTransfer {
         }
 
         loop {
-            write = self.send_sb(write).await?;
+            write = Self::send_sb(write).await?;
             read = self.wait_block(read).await?;
-            write = self.send_goo(write).await?;
-            let x = self.wait_ack(read).await?;
+            write = Self::send_goo(write).await?;
+            let x = Self::wait_ack(read).await?;
             let success = x.0;
             read = x.1;
             assert!(success);
@@ -410,12 +407,12 @@ impl PunterTransfer {
             }
         }
 
-        write = self.send_sb(write).await?;
-        read = self.wait_syn(read).await?;
-        write = self.send_syn(write).await?;
-        read = self.wait_send_block(read).await?;
-        read = self.wait_send_block(read).await?;
-        read = self.wait_send_block(read).await?;
+        write = Self::send_sb(write).await?;
+        read = Self::wait_syn(read).await?;
+        write = Self::send_syn(write).await?;
+        read = Self::wait_send_block(read).await?;
+        read = Self::wait_send_block(read).await?;
+        read = Self::wait_send_block(read).await?;
 
         Ok((read, write))
     }
