@@ -59,8 +59,7 @@ mod punter {
             let mut cursor = io::Cursor::new(vec![7]);
             cursor.write_all(&self.check_add.to_le_bytes()).unwrap();
             cursor.write_all(&self.check_xor.to_le_bytes()).unwrap();
-            // Size includes this header, which is 7 bytes
-            cursor.write_all(&[self.block_size + 7]).unwrap();
+            cursor.write_all(&[self.block_size]).unwrap();
             cursor.write_all(&self.block_num.to_le_bytes()).unwrap();
 
             cursor.into_inner()
@@ -293,7 +292,8 @@ impl PunterTransfer {
         let payload = &self.payload[0..last_block_size as usize];
         println!("Sending payload len {}", payload.len());
 
-        let mut header = punter::PunterHeader::new(block_num, next_block_size);
+        // Account for the 7 bytes of header
+        let mut header = punter::PunterHeader::new(block_num, next_block_size+7);
         let check_add = header.check_add(payload);
         let check_xor = header.check_xor(payload);
         header.check_add = check_add;
