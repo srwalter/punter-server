@@ -220,47 +220,6 @@ impl PunterTransfer {
         }
     }
 
-    async fn maybe_send_block<R: Unpin + AsyncReadExt, W: Unpin + AsyncWrite>(
-        &self,
-        read: R,
-        mut write: W,
-    ) -> io::Result<(R, W)> {
-        let (good, read) = Self::wait_rx_word(read).await?;
-
-        match good {
-            GoodBadSb::Sb => {
-                write = self.send_block(write).await?;
-            }
-            _ => (),
-        }
-
-        return Ok((read, write));
-    }
-
-    async fn maybe_send_ack<R: Unpin + AsyncRead, W: Unpin + AsyncWrite>(
-        &mut self,
-        read: R,
-        mut write: W,
-    ) -> io::Result<(R, W)> {
-        let (good, read) = Self::wait_rx_word(read).await?;
-
-        match good {
-            GoodBadSb::Good => {
-                // Packet acknowledged, so we can send different data next time
-                let block_size = self.get_last_block_size();
-                self.block_num += 1;
-                self.payload = self.payload.split_off(block_size as usize);
-                write = Self::send_ack(write).await?;
-            }
-            GoodBadSb::Bad => {
-                write = Self::send_ack(write).await?;
-            }
-            GoodBadSb::Sb => (),
-        }
-
-        return Ok((read, write));
-    }
-
     fn get_last_block_size(&self) -> u8 {
         if self.block_num == 0 && !self.metadata_block {
             // For non-metadata blocks, the first block is a bare header
@@ -343,13 +302,25 @@ impl PunterTransfer {
         write = Self::send_ack(write).await?;
 
         loop {
-            let x = self.maybe_send_block(read, write).await?;
-            read = x.0;
-            write = x.1;
+            let x = Self::wait_rx_word(read).await?;
+            let good = x.0;
+            read = x.1;
 
-            let x = self.maybe_send_ack(read, write).await?;
-            read = x.0;
-            write = x.1;
+            match good {
+                GoodBadSb::Good => {
+                    // Packet acknowledged, so we can send different data next time
+                    let block_size = self.get_last_block_size();
+                    self.block_num += 1;
+                    self.payload = self.payload.split_off(block_size as usize);
+                    write = Self::send_ack(write).await?;
+                }
+                GoodBadSb::Bad => {
+                    write = Self::send_ack(write).await?;
+                }
+                GoodBadSb::Sb => {
+                    write = self.send_block(write).await?;
+                }
+            }
 
             if self.payload.len() == 0 {
                 break;
