@@ -3,7 +3,7 @@ use std::io::Read;
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::prelude::*;
 
@@ -293,7 +293,7 @@ impl PunterTransfer {
         println!("Sending payload len {}", payload.len());
 
         // Account for the 7 bytes of header
-        let mut header = punter::PunterHeader::new(block_num, next_block_size+7);
+        let mut header = punter::PunterHeader::new(block_num, next_block_size + 7);
         let check_add = header.check_add(payload);
         let check_xor = header.check_xor(payload);
         header.check_add = check_add;
@@ -445,16 +445,28 @@ impl PunterTransfer {
     }
 }
 
-async fn read_line<T: AsyncBufReadExt + Unpin>(mut read: T) -> io::Result<(T, String)> {
+async fn read_line<R: AsyncBufReadExt + Unpin, W: AsyncWriteExt + Unpin>(
+    mut read: R,
+    mut write: W,
+) -> io::Result<(R, W, String)> {
     let mut line = Vec::new();
-    read.read_until('\r' as u8, &mut line).await?;
-    if line[0] == 128 as u8 {
-        line.remove(0);
+
+    loop {
+        let mut byte = [0; 1];
+        read.read_exact(&mut byte).await?;
+        write.write_all(&byte).await?;
+
+        if byte[0] == '\r' as u8 {
+            break;
+        }
+        if byte[0] != 128 as u8 {
+            line.push(byte[0]);
+        }
     }
-    // Remove CR
-    line.pop();
+
     Ok((
         read,
+        write,
         std::str::from_utf8(&line).expect("UTF decode").to_string(),
     ))
 }
@@ -466,11 +478,10 @@ async fn handle_client(mut conn: TcpStream) -> io::Result<()> {
     let mut download = false;
 
     loop {
-        let (buf2, strline) = read_line(bufread).await?;
+        let (buf2, write2, strline) = read_line(bufread, write).await?;
         bufread = buf2;
+        write = write2;
         println!("{}", strline);
-        write.write_all(&strline.as_bytes()).await?;
-        write.write_all(&"\r".as_bytes()).await?;
 
         match strline.as_ref() {
             "BYE" => {
@@ -478,11 +489,10 @@ async fn handle_client(mut conn: TcpStream) -> io::Result<()> {
             }
             "GET" => {
                 write.write_all(&" WHICH FILE?\r".as_bytes()).await?;
-                let (buf2, fname) = read_line(bufread).await?;
+                let (buf2, write2, fname) = read_line(bufread, write).await?;
                 bufread = buf2;
+                write = write2;
 
-                write.write_all(&fname.as_bytes()).await?;
-                write.write_all(&"\r".as_bytes()).await?;
                 transfer = Some(fname);
                 break;
             }
