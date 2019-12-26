@@ -407,24 +407,18 @@ impl PunterTransfer {
 
     async fn download<R: AsyncReadExt + Unpin, W: AsyncWrite + Unpin>(
         &mut self,
-        read: R,
-        write: W,
+        mut read: R,
+        mut write: W,
     ) -> io::Result<(R, W)> {
-        let read = if self.metadata_block {
-            self.wait_good(read).await?
-        } else {
-            read
+        if self.metadata_block {
+            read = self.wait_good(read).await?
         };
 
-        let mut r = Some(read);
-        let mut w = Some(write);
-
         loop {
-            let write = self.send_goo(w.take().unwrap()).await?;
-            let (success, read) = self.wait_ack(r.take().unwrap()).await?;
-
-            r = Some(read);
-            w = Some(write);
+            write = self.send_goo(write).await?;
+            let x = self.wait_ack(read).await?;
+            let success = x.0;
+            read = x.1;
 
             if success {
                 break;
@@ -432,26 +426,25 @@ impl PunterTransfer {
         }
 
         loop {
-            let write = self.send_sb(w.take().unwrap()).await?;
-            let read = self.wait_block(r.take().unwrap()).await?;
-            let write = self.send_goo(write).await?;
-            let (success, read) = self.wait_ack(read).await?;
+            write = self.send_sb(write).await?;
+            read = self.wait_block(read).await?;
+            write = self.send_goo(write).await?;
+            let x = self.wait_ack(read).await?;
+            let success = x.0;
+            read = x.1;
             assert!(success);
-
-            r = Some(read);
-            w = Some(write);
 
             if self.next_block_size < 7 {
                 break;
             }
         }
 
-        let write = self.send_sb(w.take().unwrap()).await?;
-        let read = self.wait_syn(r.take().unwrap()).await?;
-        let write = self.send_syn(write).await?;
-        let read = self.wait_send_block(read).await?;
-        let read = self.wait_send_block(read).await?;
-        let read = self.wait_send_block(read).await?;
+        write = self.send_sb(write).await?;
+        read = self.wait_syn(read).await?;
+        write = self.send_syn(write).await?;
+        read = self.wait_send_block(read).await?;
+        read = self.wait_send_block(read).await?;
+        read = self.wait_send_block(read).await?;
 
         Ok((read, write))
     }
