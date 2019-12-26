@@ -148,23 +148,6 @@ impl PunterTransfer {
         }
     }
 
-    async fn maybe_send_block<R: Unpin + AsyncReadExt, W: Unpin + AsyncWrite>(
-        &self,
-        read: R,
-        mut write: W,
-    ) -> io::Result<(R, W)> {
-        let (good, read) = self.wait_rx_word(read).await?;
-
-        match good {
-            GoodBadSb::Sb => {
-                write = self.send_block(write).await?;
-            }
-            _ => (),
-        }
-
-        return Ok((read, write));
-    }
-
     async fn wait_block<R: Unpin + AsyncReadExt>(&mut self, mut read: R) -> io::Result<R> {
         println!("Waiting for block ({} bytes)", self.next_block_size);
 
@@ -212,6 +195,29 @@ impl PunterTransfer {
         }
     }
 
+    async fn wait_good<R: Unpin + AsyncRead>(&mut self, mut read: R) -> io::Result<R> {
+        println!("Waiting for GOO");
+        loop {
+            let x = read.read_u8().await?;
+            println!("Got {}", x);
+            if x != 'G' as u8 {
+                continue;
+            }
+            let x = read.read_u8().await?;
+            println!("Got {}", x);
+            if x != 'O' as u8 {
+                continue;
+            }
+            let x = read.read_u8().await?;
+            println!("Got {}", x);
+            if x != 'O' as u8 {
+                continue;
+            }
+            println!("Got GOO");
+            return Ok(read);
+        }
+    }
+
     async fn wait_ack<R: Unpin + AsyncReadExt>(&self, mut read: R) -> io::Result<(bool, R)> {
         println!("Waiting for ACK");
 
@@ -255,27 +261,21 @@ impl PunterTransfer {
         }
     }
 
-    async fn wait_good<R: Unpin + AsyncRead>(&mut self, mut read: R) -> io::Result<R> {
-        println!("Waiting for GOO");
-        loop {
-            let x = read.read_u8().await?;
-            println!("Got {}", x);
-            if x != 'G' as u8 {
-                continue;
+    async fn maybe_send_block<R: Unpin + AsyncReadExt, W: Unpin + AsyncWrite>(
+        &self,
+        read: R,
+        mut write: W,
+    ) -> io::Result<(R, W)> {
+        let (good, read) = self.wait_rx_word(read).await?;
+
+        match good {
+            GoodBadSb::Sb => {
+                write = self.send_block(write).await?;
             }
-            let x = read.read_u8().await?;
-            println!("Got {}", x);
-            if x != 'O' as u8 {
-                continue;
-            }
-            let x = read.read_u8().await?;
-            println!("Got {}", x);
-            if x != 'O' as u8 {
-                continue;
-            }
-            println!("Got GOO");
-            return Ok(read);
+            _ => (),
         }
+
+        return Ok((read, write));
     }
 
     async fn maybe_send_ack<R: Unpin + AsyncRead, W: Unpin + AsyncWrite>(
