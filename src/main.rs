@@ -105,6 +105,18 @@ enum GoodBadSb {
     Sb,
 }
 
+enum RxError<R: AsyncRead> {
+    TimedOut(R),
+    BadChecksum(R),
+    IoError(io::Error),
+}
+
+impl<T: AsyncRead> From<io::Error> for RxError<T> {
+    fn from(x: io::Error) -> RxError<T> {
+        RxError::IoError(x)
+    }
+}
+
 impl PunterTransfer {
     fn new(payload: Vec<u8>, metadata_block: bool) -> Self {
         let next_block_size = if metadata_block { 8 } else { 7 };
@@ -141,14 +153,36 @@ impl PunterTransfer {
         }
     }
 
-    async fn wait_block<R: Unpin + AsyncReadExt>(&mut self, mut read: R) -> io::Result<R> {
+    async fn wait_block<R: Unpin + AsyncReadExt>(&mut self, mut read: R) -> Result<R, RxError<R>> {
         println!("Waiting for block ({} bytes)", self.next_block_size);
 
-        let mut buf = vec![0 as u8; self.next_block_size as usize];
-        read.read_exact(&mut buf).await?;
+        let mut buf = bytes::BytesMut::with_capacity(self.next_block_size as usize);
+        while buf.len() < self.next_block_size as usize {
+            match tokio::time::timeout(Duration::from_secs(10), read.read_buf(&mut buf)).await {
+                Err(_) => return Err(RxError::TimedOut(read)),
+                Ok(Ok(0)) => panic!("Premature EOF"),
+                Ok(x) => x?,
+            };
+        }
 
-        let header = &buf[0..7];
-        let header = punter::PunterHeader::from_bytes(header);
+        let header_bytes = &buf[0..7];
+        let mut header = punter::PunterHeader::from_bytes(header_bytes);
+
+        let check_add = header.check_add;
+        let check_xor = header.check_xor;
+
+        header.check_add = 0;
+        header.check_xor = 0;
+
+        if header.check_add(&buf[7..]) != check_add {
+            println!("Bad ADD sum {} {:?}", check_add, header_bytes);
+            println!("Calculated {}", header.check_add(&buf[7..]));
+            return Err(RxError::BadChecksum(read));
+        }
+        if header.check_xor(&buf[7..]) != check_xor {
+            println!("Bad XOR sum {} {:?}", check_xor, header_bytes);
+            return Err(RxError::BadChecksum(read));
+        }
 
         if self.next_block_size > 7 {
             self.payload.extend_from_slice(&buf[7..]);
@@ -159,8 +193,6 @@ impl PunterTransfer {
         } else {
             header.block_size
         };
-
-        // XXX: verify checksum
 
         Ok(read)
     }
@@ -191,6 +223,10 @@ impl PunterTransfer {
             println!("Got ACK");
         } else {
             println!("Didn't get it");
+            // We're out-of-sync, so flush anything still in the buffer
+            let mut buf = Vec::new();
+            let _ =
+                tokio::time::timeout(Duration::from_millis(1), read.read_to_end(&mut buf)).await;
         }
         Ok((success, read))
     }
@@ -213,6 +249,7 @@ impl PunterTransfer {
                 return Ok((GoodBadSb::Sb, read));
             } else {
                 println!("Didn't get good or bad {:?}", buf);
+                // We're out-of-sync, so flush anything still in the buffer
                 let mut buf = Vec::new();
                 let _ = tokio::time::timeout(Duration::from_millis(1), read.read_to_end(&mut buf))
                     .await;
@@ -278,6 +315,12 @@ impl PunterTransfer {
     async fn send_goo<W: Unpin + AsyncWrite>(mut write: W) -> io::Result<W> {
         println!("Sent GOO");
         write.write_all(&"GOO".as_bytes()).await?;
+        Ok(write)
+    }
+
+    async fn send_bad<W: Unpin + AsyncWrite>(mut write: W) -> io::Result<W> {
+        println!("Sent BAD");
+        write.write_all(&"BAD".as_bytes()).await?;
         Ok(write)
     }
 
@@ -356,15 +399,40 @@ impl PunterTransfer {
         }
 
         loop {
-            write = Self::send_sb(write).await?;
-            read = self.wait_block(read).await?;
-            write = Self::send_goo(write).await?;
-            let x = Self::wait_ack(read).await?;
-            let success = x.0;
-            read = x.1;
-            assert!(success);
+            let mut good_checksum = true;
+            loop {
+                write = Self::send_sb(write).await?;
+                match self.wait_block(read).await {
+                    Ok(r) => {
+                        read = r;
+                        break;
+                    }
+                    Err(RxError::TimedOut(r)) => read = r,
+                    Err(RxError::BadChecksum(r)) => {
+                        read = r;
+                        good_checksum = false;
+                        break;
+                    }
+                    Err(RxError::IoError(e)) => return Err(e),
+                }
+            }
 
-            if self.next_block_size < 7 {
+            loop {
+                if good_checksum {
+                    write = Self::send_goo(write).await?;
+                } else {
+                    write = Self::send_bad(write).await?;
+                }
+                let x = Self::wait_ack(read).await?;
+                let success = x.0;
+                read = x.1;
+
+                if success {
+                    break;
+                }
+            }
+
+            if self.next_block_size < 7 && good_checksum {
                 break;
             }
         }
