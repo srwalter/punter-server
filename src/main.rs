@@ -509,6 +509,6 @@ async fn main() -> io::Result<()> {
 
     loop {
         let (c, _) = listener.accept().await?;
-        handle_client(c).await?;
+        tokio::spawn(handle_client(c));
     }
 }
