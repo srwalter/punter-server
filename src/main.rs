@@ -548,11 +548,12 @@ async fn handle_client(mut conn: TcpStream) -> io::Result<()> {
             .collect();
 
         println!("Transferring {}", fname);
-        write.write_all(&" SENDING NOW\r".as_bytes()).await?;
+        write.write_all(&" START YOUR MULTI-RECEIVE NOW\r".as_bytes()).await?;
 
         let mut f = std::fs::File::open(&fname)?;
 
         std::thread::sleep_ms(5000);
+        // Send multi-punter start header
         write.write_all(&[0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09]).await?;
         write.write_all(&fname_orig.as_bytes()).await?;
         write.write_all(",P\r".as_bytes()).await?;
@@ -560,12 +561,18 @@ async fn handle_client(mut conn: TcpStream) -> io::Result<()> {
 
         let payload = vec![1 as u8];
         let mut punter = PunterTransfer::new(payload, true);
-        let (bufread, write) = punter.upload(bufread, write).await?;
+        let (bufread, write2) = punter.upload(bufread, write).await?;
+        write = write2;
 
         let mut payload = Vec::new();
         f.read_to_end(&mut payload)?;
         let mut punter = PunterTransfer::new(payload, false);
-        let (_bufread, _write) = punter.upload(bufread, write).await?;
+        let (_bufread, write2) = punter.upload(bufread, write).await?;
+        write = write2;
+
+        // Send multi-punter trailer
+        write.write_all(&[0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09]).await?;
+        write.write_all(&[0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0d]).await?;
     }
 
     Ok(())
@@ -577,7 +584,10 @@ async fn main() -> io::Result<()> {
     let mut listener = TcpListener::bind(&addr).await?;
 
     loop {
+        println!("Waiting for connection");
         let (c, _) = listener.accept().await?;
-        let _ = handle_client(c).await;
+        println!("Connected");
+        let x = handle_client(c).await;
+        println!("Connection closed: {:?}", x);
     }
 }
