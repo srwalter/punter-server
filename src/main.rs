@@ -539,9 +539,9 @@ async fn handle_client(mut conn: TcpStream) -> io::Result<()> {
         let mut punter = PunterTransfer::new(payload, false);
         let (_bufread, _write) = punter.download(bufread, write).await?;
         println!("Received {} bytes", punter.payload.len());
-    } else if let Some(fname) = transfer {
+    } else if let Some(fname_orig) = transfer {
         // Sanitize filename
-        let fname = fname.to_lowercase();
+        let fname = fname_orig.to_lowercase();
         let fname: String = fname
             .chars()
             .filter(|x| x.is_alphanumeric() || *x == '.')
@@ -550,7 +550,13 @@ async fn handle_client(mut conn: TcpStream) -> io::Result<()> {
         println!("Transferring {}", fname);
         write.write_all(&" SENDING NOW\r".as_bytes()).await?;
 
-        let mut f = std::fs::File::open(fname)?;
+        let mut f = std::fs::File::open(&fname)?;
+
+        std::thread::sleep_ms(5000);
+        write.write_all(&[0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09]).await?;
+        write.write_all(&fname_orig.as_bytes()).await?;
+        write.write_all(",P\r".as_bytes()).await?;
+        write.write_all("GOO".as_bytes()).await?;
 
         let payload = vec![1 as u8];
         let mut punter = PunterTransfer::new(payload, true);
@@ -572,6 +578,6 @@ async fn main() -> io::Result<()> {
 
     loop {
         let (c, _) = listener.accept().await?;
-        tokio::spawn(handle_client(c));
+        let _ = handle_client(c).await;
     }
 }
